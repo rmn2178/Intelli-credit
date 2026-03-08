@@ -182,3 +182,41 @@ class IntelligenceUpdate(BaseModel):
     signals: list[IntelligenceSignal] = Field(default_factory=list)
     updated_risk_score: float = 0.0
     summary: str = ""
+
+
+# ─── Forensic Audit Engine ────────────────────────────────────────────────────
+
+class ForensicCheckpointResult(BaseModel):
+    id: int
+    name: str = ""
+    cat: str = ""
+    formula: str = ""
+    result_value: Any = None
+    result_label: str = ""
+    score_tier: str = "Score_1"
+    score_points: int = 0
+    is_veto: bool = False
+
+
+class ForensicAuditReport(BaseModel):
+    results: list[ForensicCheckpointResult] = Field(default_factory=list)
+    aggregate_score: int = 0
+    risk_grade: str = ""
+    vetoed: bool = False
+    veto_checkpoint: Optional[ForensicCheckpointResult] = None
+
+
+class CAMFiveCsReport(BaseModel):
+    company_name: str = ""
+    loan_amount: float = 0
+    loan_purpose: str = ""
+    generated_at: str = ""
+    character: dict = Field(default_factory=dict)
+    capacity: dict = Field(default_factory=dict)
+    capital: dict = Field(default_factory=dict)
+    collateral: dict = Field(default_factory=dict)
+    conditions: dict = Field(default_factory=dict)
+    decision: dict = Field(default_factory=dict)
+    five_cs_summary: dict = Field(default_factory=dict)
+    full_narrative: str = ""
+

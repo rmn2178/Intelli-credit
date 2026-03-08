@@ -8,7 +8,14 @@ export default function ResultsPage() {
     const [tab, setTab] = useState('decision');
     const [loading, setLoading] = useState(true);
 
-    useEffect(() => { const sid = localStorage.getItem('session_id'); if (!sid) { setLoading(false); return; } fetch(`${API}/api/sessions/${sid}/results`).then(r => r.json()).then(d => { setData(d); setLoading(false); }).catch(() => setLoading(false)); }, []);
+    useEffect(() => {
+        const sid = localStorage.getItem('session_id');
+        if (!sid) { setLoading(false); return; }
+        fetch(`${API}/api/sessions/${sid}/results`)
+            .then(r => r.json())
+            .then(d => { setData(d); setLoading(false); })
+            .catch(() => setLoading(false));
+    }, []);
 
     if (loading) return <div className="p-6 text-data text-[#94A3B8]">Loading results...</div>;
     if (!data) return <div className="p-6 text-data text-[#94A3B8]">No results available. Run processing first.</div>;
@@ -18,10 +25,19 @@ export default function ResultsPage() {
     const cam = data.cam_report || {};
     const debate = data.committee_debate || {};
     const evidence = data.evidence || {};
-    const sim = data.simulation_results || {};
+    const forensic = data.forensic_audit || {};
+    const checkpoints = forensic.audit_scores || [];
+    const camFiveCs = forensic.cam_five_cs || cam;
 
-    const TABS = ['decision', 'cam', 'committee', 'ratios', 'evidence'];
-    const TAB_LABELS: Record<string, string> = { decision: 'Decision', cam: 'CAM Report', committee: 'Committee', ratios: 'Financial Ratios', evidence: 'Evidence Trail' };
+    const sessionId = typeof window !== 'undefined' ? localStorage.getItem('session_id') : null;
+    const tierColor = (t: string) => t === 'Score_3' ? 'text-emerald-600' : t === 'Score_2' ? 'text-[#B45309]' : 'text-danger-500';
+    const tierBg = (t: string) => t === 'Score_3' ? 'badge-pass' : t === 'Score_2' ? 'badge-warn' : 'badge-fail';
+
+    const TABS = ['decision', 'forensic', 'cam', 'committee', 'ratios', 'evidence'];
+    const TAB_LABELS: Record<string, string> = {
+        decision: 'Decision', forensic: 'Forensic Audit', cam: 'CAM Report',
+        committee: 'Committee', ratios: 'Financial Ratios', evidence: 'Evidence Trail'
+    };
 
     return (
         <div className="p-6">
@@ -31,21 +47,30 @@ export default function ResultsPage() {
             </div>
 
             {/* Decision Card */}
-            <div className={`card mb-4 border-l-[3px] ${decision.decision === 'Approve' ? 'border-l-emerald-500' : decision.decision === 'Reject' ? 'border-l-danger-500' : 'border-l-[#B45309]'}`}>
+            <div className={`card mb-4 border-l-[3px] ${decision.decision === 'APPROVED' ? 'border-l-emerald-500' :
+                    decision.decision === 'REJECTED' ? 'border-l-danger-500' :
+                        decision.decision === 'Approve' ? 'border-l-emerald-500' :
+                            decision.decision === 'Reject' ? 'border-l-danger-500' : 'border-l-[#B45309]'
+                }`}>
                 <div className="grid grid-cols-5 divide-x divide-border">
                     {[
-                        { label: 'Decision', value: decision.decision || 'PENDING', color: decision.decision === 'Approve' ? 'text-emerald-600' : decision.decision === 'Reject' ? 'text-danger-500' : 'text-[#B45309]', badge: 'grounded' },
-                        { label: 'Risk Score', value: `${((decision.risk_score || 0) * 100).toFixed(0)}%`, color: 'text-[#B45309]', badge: 'smt' },
-                        { label: 'Fraud Score', value: `${((decision.fraud_score || 0) * 100).toFixed(0)}%`, color: 'text-danger-500', badge: 'grounded' },
-                        { label: 'Confidence', value: `${((decision.confidence || 0) * 100).toFixed(0)}%`, color: 'text-navy-500', badge: 'verified' },
-                        { label: 'DSCR', value: calcs.dscr?.value || '—', color: 'text-emerald-600', badge: 'smt' },
+                        { label: 'Decision', value: decision.decision || 'PENDING', color: decision.decision === 'APPROVED' || decision.decision === 'Approve' ? 'text-emerald-600' : decision.decision === 'REJECTED' || decision.decision === 'Reject' ? 'text-danger-500' : 'text-[#B45309]' },
+                        { label: 'Score', value: `${decision.risk_score || 0}/300`, color: 'text-navy-500' },
+                        { label: 'Risk Grade', value: decision.risk_grade || '—', color: 'text-[#B45309]' },
+                        { label: 'Loan Limit', value: decision.loan_limit || '—', color: 'text-navy-500' },
+                        { label: 'Rate / Tenure', value: `${decision.interest_rate || '—'} / ${decision.tenure || '—'}`, color: 'text-[#64748B]' },
                     ].map(m => (
                         <div key={m.label} className="px-4 py-3 text-center">
-                            <p className={`text-heading font-bold font-mono ${m.color}`}>{m.value}<span className={`micro-badge micro-badge-${m.badge}`}>{m.badge === 'smt' ? 'SMT' : m.badge === 'verified' ? 'V' : 'G'}</span></p>
+                            <p className={`text-heading font-bold font-mono ${m.color}`}>{m.value}</p>
                             <p className="text-label text-[#94A3B8] uppercase mt-1">{m.label}</p>
                         </div>
                     ))}
                 </div>
+                {decision.reason && (
+                    <div className="px-4 py-2 border-t border-border text-data text-[#64748B]">
+                        <strong>Reason:</strong> {decision.reason}
+                    </div>
+                )}
             </div>
 
             {/* Tabs */}
@@ -55,6 +80,7 @@ export default function ResultsPage() {
                 ))}
             </div>
 
+            {/* Decision Tab */}
             {tab === 'decision' && (
                 <div className="grid grid-cols-2 gap-4">
                     <div className="card">
@@ -69,27 +95,106 @@ export default function ResultsPage() {
                         </div>
                     </div>
                     <div className="card">
-                        <div className="px-4 py-2 border-b border-border"><span className="text-label font-semibold text-[#64748B] uppercase">Simulation Insights</span></div>
+                        <div className="px-4 py-2 border-b border-border"><span className="text-label font-semibold text-[#64748B] uppercase">Forensic Audit Summary</span></div>
                         <div className="divide-y divide-border">
-                            {sim.counterfactual_insights?.map((c: string, i: number) => (<div key={i} className="px-4 py-2 text-data text-[#64748B]">{c}</div>))}
-                            {sim.scenarios?.slice(0, 4).map((s: any, i: number) => (
-                                <div key={i} className="flex justify-between px-4 py-2 text-data">
-                                    <span className="text-[#64748B]">{s.scenario_name}</span>
-                                    <span className="font-bold font-mono text-[#B45309]">{(s.default_probability_after * 100).toFixed(1)}%</span>
-                                </div>
-                            ))}
+                            <div className="px-4 py-3 flex justify-between">
+                                <span className="text-body text-[#64748B]">Aggregate Score</span>
+                                <span className="font-bold font-mono text-navy-500">{forensic.aggregate_score || 0}/300</span>
+                            </div>
+                            <div className="px-4 py-3 flex justify-between">
+                                <span className="text-body text-[#64748B]">Risk Grade</span>
+                                <span className={`font-bold ${forensic.risk_grade === 'Prime Borrower' || forensic.risk_grade === 'Strong Borrower' ? 'text-emerald-600' : 'text-[#B45309]'}`}>
+                                    {forensic.risk_grade || '—'}
+                                </span>
+                            </div>
+                            <div className="px-4 py-3 flex justify-between">
+                                <span className="text-body text-[#64748B]">Checkpoints Passed</span>
+                                <span className="font-bold font-mono text-navy-500">{checkpoints.filter((c: any) => c.score_tier === 'Score_3').length}/{checkpoints.length}</span>
+                            </div>
+                            <div className="px-4 py-3 flex justify-between">
+                                <span className="text-body text-[#64748B]">Hard Veto</span>
+                                <span className={`font-bold ${forensic.vetoed ? 'text-danger-500' : 'text-emerald-600'}`}>
+                                    {forensic.vetoed ? 'TRIGGERED' : 'CLEAR'}
+                                </span>
+                            </div>
                         </div>
                     </div>
                 </div>
             )}
 
-            {tab === 'cam' && (
+            {/* Forensic Audit Tab */}
+            {tab === 'forensic' && (
                 <div className="card">
-                    <div className="px-4 py-2 border-b border-border"><span className="text-label font-semibold text-[#64748B] uppercase">Credit Appraisal Memorandum</span></div>
-                    <div className="px-4 py-4 text-body text-[#334155] whitespace-pre-wrap leading-relaxed">{cam.full_narrative || 'CAM report not yet generated.'}</div>
+                    <div className="px-4 py-2 border-b border-border flex items-center justify-between">
+                        <span className="text-label font-semibold text-[#64748B] uppercase">
+                            30-Checkpoint Forensic Audit Results
+                        </span>
+                        <span className="font-mono text-data text-navy-500 font-bold">
+                            Total: {forensic.aggregate_score || 0}/300 — {forensic.risk_grade || 'Pending'}
+                        </span>
+                    </div>
+                    <table className="w-full text-data">
+                        <thead><tr className="border-b border-border text-left">
+                            <th className="px-3 py-2 text-label font-semibold text-[#64748B] uppercase w-[40px]">ID</th>
+                            <th className="px-3 py-2 text-label font-semibold text-[#64748B] uppercase w-[60px]">Cat</th>
+                            <th className="px-3 py-2 text-label font-semibold text-[#64748B] uppercase">Checkpoint</th>
+                            <th className="px-3 py-2 text-label font-semibold text-[#64748B] uppercase">Result</th>
+                            <th className="px-3 py-2 text-label font-semibold text-[#64748B] uppercase w-[90px]">Score</th>
+                            <th className="px-3 py-2 text-label font-semibold text-[#64748B] uppercase w-[50px]">Pts</th>
+                        </tr></thead>
+                        <tbody className="divide-y divide-border">
+                            {checkpoints.map((cp: any) => (
+                                <tr key={cp.id} className={cp.is_veto ? 'bg-[#FEF2F2]' : ''}>
+                                    <td className="px-3 py-2 font-mono text-[#94A3B8]">{String(cp.id).padStart(2, '0')}</td>
+                                    <td className="px-3 py-2"><span className="badge-info">{cp.cat}</span></td>
+                                    <td className="px-3 py-2 font-medium text-[#334155]">
+                                        {cp.name}
+                                        {cp.is_veto && <span className="badge-fail ml-2">VETO</span>}
+                                    </td>
+                                    <td className="px-3 py-2 text-[#64748B] font-mono">{cp.result_label}</td>
+                                    <td className="px-3 py-2">
+                                        <span className={tierBg(cp.score_tier)}>{cp.score_tier?.replace('Score_', 'Score ')}</span>
+                                    </td>
+                                    <td className={`px-3 py-2 font-bold font-mono ${tierColor(cp.score_tier)}`}>{cp.score_points}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
                 </div>
             )}
 
+            {/* CAM Report Tab */}
+            {tab === 'cam' && (
+                <div className="card">
+                    <div className="px-4 py-2 border-b border-border flex items-center justify-between">
+                        <span className="text-label font-semibold text-[#64748B] uppercase">Credit Appraisal Memorandum — Five Cs</span>
+                        <div className="flex gap-2">
+                            {sessionId && (
+                                <>
+                                    <a href={`${API}/api/sessions/${sessionId}/download-cam?format=pdf`} className="btn-primary text-[11px] py-[4px] px-[10px]" download>↓ PDF</a>
+                                    <a href={`${API}/api/sessions/${sessionId}/download-cam?format=docx`} className="btn-secondary text-[11px] py-[4px] px-[10px]" download>↓ DOCX</a>
+                                </>
+                            )}
+                        </div>
+                    </div>
+                    {/* Five Cs summary */}
+                    {camFiveCs.five_cs_summary && (
+                        <div className="grid grid-cols-5 divide-x divide-border border-b border-border">
+                            {Object.entries(camFiveCs.five_cs_summary).map(([key, val]: [string, any]) => (
+                                <div key={key} className="px-3 py-3 text-center">
+                                    <p className="text-body font-bold text-navy-500">{val}</p>
+                                    <p className="text-label text-[#94A3B8] uppercase mt-1">{key}</p>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                    <div className="px-4 py-4 text-body text-[#334155] whitespace-pre-wrap leading-relaxed">
+                        {camFiveCs.full_narrative || cam.full_narrative || 'CAM report not yet generated.'}
+                    </div>
+                </div>
+            )}
+
+            {/* Committee Tab */}
             {tab === 'committee' && (
                 <div className="card">
                     <div className="px-4 py-2 border-b border-border"><span className="text-label font-semibold text-[#64748B] uppercase">Credit Committee Deliberation</span></div>
@@ -103,6 +208,7 @@ export default function ResultsPage() {
                 </div>
             )}
 
+            {/* Financial Ratios Tab */}
             {tab === 'ratios' && (
                 <div className="card">
                     <table className="w-full text-data">
@@ -116,7 +222,7 @@ export default function ResultsPage() {
                             {Object.entries(calcs).map(([key, info]: [string, any]) => (
                                 <tr key={key}>
                                     <td className="px-4 py-2 font-medium text-[#334155]">{key.replace(/_/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase())}</td>
-                                    <td className="px-4 py-2 font-bold font-mono text-navy-500">{info.value}{info.unit || ''}<span className="micro-badge micro-badge-smt">SMT</span></td>
+                                    <td className="px-4 py-2 font-bold font-mono text-navy-500">{info.value}{info.unit || ''}</td>
                                     <td className="px-4 py-2 text-[#94A3B8] font-mono text-[10px]">{info.formula}</td>
                                     <td className="px-4 py-2"><span className={info.status === 'GREEN' ? 'badge-pass' : info.status === 'RED' ? 'badge-fail' : 'badge-warn'}>{info.status}</span></td>
                                 </tr>
@@ -126,6 +232,7 @@ export default function ResultsPage() {
                 </div>
             )}
 
+            {/* Evidence Trail Tab */}
             {tab === 'evidence' && (
                 <div className="card">
                     <div className="divide-y divide-border">
@@ -146,7 +253,17 @@ export default function ResultsPage() {
             {/* JSON */}
             <div className="card mt-4">
                 <div className="px-4 py-2 border-b border-border"><span className="text-label font-semibold text-[#64748B] uppercase">Structured Decision Output</span></div>
-                <pre className="px-4 py-3 text-[11px] font-mono text-navy-500 overflow-auto max-h-[200px]">{JSON.stringify({ borrower: decision.borrower, risk_score: decision.risk_score, decision: decision.decision, fraud_score: decision.fraud_score, confidence: decision.confidence }, null, 2)}</pre>
+                <pre className="px-4 py-3 text-[11px] font-mono text-navy-500 overflow-auto max-h-[200px]">{JSON.stringify({
+                    borrower: decision.borrower,
+                    risk_score: decision.risk_score,
+                    max_score: 300,
+                    risk_grade: decision.risk_grade,
+                    decision: decision.decision,
+                    loan_limit: decision.loan_limit,
+                    interest_rate: decision.interest_rate,
+                    tenure: decision.tenure,
+                    vetoed: decision.vetoed,
+                }, null, 2)}</pre>
             </div>
         </div>
     );

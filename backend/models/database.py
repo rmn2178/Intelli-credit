@@ -55,6 +55,18 @@ class SessionStore:
             "intelligence_updates": [],
             # Processing logs
             "processing_logs": [],
+            # Forensic Audit Engine
+            "forensic_audit": {
+                "extracted_data": {},
+                "audit_scores": [],
+                "processing_state": "pending",
+                "aggregate_score": 0,
+                "risk_grade": "",
+                "vetoed": False,
+                "veto_checkpoint": None,
+                "cam_five_cs": {},
+                "data_completeness_score": 0,
+            },
         }
         return session_id
 
@@ -125,6 +137,34 @@ class SessionStore:
         session = self._sessions.get(session_id)
         if session:
             session["credit_decision"] = decision
+
+    # ─── Forensic Audit Methods ──────────────────────────────────────────────
+    def set_forensic_extracted(self, session_id: str, data: dict) -> None:
+        session = self._sessions.get(session_id)
+        if session:
+            session["forensic_audit"]["extracted_data"] = data
+
+    def set_forensic_scores(self, session_id: str, scores: dict) -> None:
+        session = self._sessions.get(session_id)
+        if session:
+            session["forensic_audit"]["audit_scores"] = scores.get("results", [])
+            session["forensic_audit"]["aggregate_score"] = scores.get("aggregate_score", 0)
+            session["forensic_audit"]["risk_grade"] = scores.get("risk_grade", "")
+            session["forensic_audit"]["vetoed"] = scores.get("vetoed", False)
+            session["forensic_audit"]["veto_checkpoint"] = scores.get("veto_checkpoint")
+            # Data completeness from extraction meta
+            dc = scores.get("data_completeness", {})
+            session["forensic_audit"]["data_completeness_score"] = dc.get("data_completeness_pct", 0)
+
+    def set_forensic_state(self, session_id: str, state: str) -> None:
+        session = self._sessions.get(session_id)
+        if session:
+            session["forensic_audit"]["processing_state"] = state
+
+    def set_forensic_cam(self, session_id: str, cam: dict) -> None:
+        session = self._sessions.get(session_id)
+        if session:
+            session["forensic_audit"]["cam_five_cs"] = cam
 
     def add_log(self, session_id: str, stage: str, message: str) -> None:
         session = self._sessions.get(session_id)

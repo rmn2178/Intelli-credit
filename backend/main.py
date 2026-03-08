@@ -21,11 +21,13 @@ from agents.verification_agent import VerificationAgent
 from agents.fraud_radar_agent import FraudRadarAgent
 from agents.cam_agent import CAMAgent
 from agents.committee_agent import CommitteeAgent
+from agents.forensic_audit_agent import ForensicAuditAgent
 from core.evidence_classifier import classify_evidence
 from core.calculations import run_intermediate_calculations, compute_risk_score
 from core.causal_engine import CausalEngine
 from core.regulatory_engine import RegulatoryEngine
 from core.doc_router import classify_document
+from core.cam_generator import build_cam_report, generate_pdf, generate_docx
 
 UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
@@ -184,29 +186,51 @@ async def process_documents(session_id: str):
                 await queue.put(_sse("osint", {"message": msg}))
             await queue.put(_sse("stage", {"stage": "osint", "status": "complete"}))
 
-            # Stage 8: CAM Generation
+            # Stage 8: Forensic Audit Engine (runs silently for data extraction)
+            await queue.put(_sse("stage", {"stage": "forensic", "status": "running"}))
+            fa_agent = ForensicAuditAgent(session_id, session_store)
+            forensic_vetoed = False
+            async for event in fa_agent.run():
+                etype = event.get("type", "info")
+                if etype == "veto":
+                    forensic_vetoed = True
+                    await queue.put(_sse("forensic_veto", event))
+                elif etype == "complete":
+                    await queue.put(_sse("forensic_complete", event))
+                elif etype == "info":
+                    await queue.put(_sse("forensic", {"message": event.get("message", "")}))
+                # Skip checkpoint-by-checkpoint streaming
+            await queue.put(_sse("stage", {"stage": "forensic", "status": "complete"}))
+
+            # Stage 9: CAM Report (Ollama LLM Generation)
             await queue.put(_sse("stage", {"stage": "cam", "status": "running"}))
-            ca = CAMAgent(session_id, session_store)
-            async for msg in ca.run():
+            cam_agent = CAMAgent(session_id, session_store)
+            async for msg in cam_agent.run():
                 await queue.put(_sse("cam", {"message": msg}))
             await queue.put(_sse("stage", {"stage": "cam", "status": "complete"}))
 
-            # Stage 9: Credit Committee
+            # Stage 10: Credit Committee
             await queue.put(_sse("stage", {"stage": "committee", "status": "running"}))
             cc = CommitteeAgent(session_id, session_store)
             async for msg in cc.run():
                 await queue.put(_sse("committee", {"message": msg}))
             await queue.put(_sse("stage", {"stage": "committee", "status": "complete"}))
 
-            # Final Decision
+            # Final Decision (integrates forensic audit + committee debate)
             s = session_store.get_session(session_id)
             debate = s.get("committee_debate", {})
+            f_audit = s.get("forensic_audit", {})
+            cam_data = s.get("cam_report", {})
             decision = {
                 "borrower": s.get("company_name", ""),
-                "risk_score": s.get("financial_data", {}).get("risk_score", 0),
+                "risk_score": f_audit.get("aggregate_score", 0),
+                "max_score": 300,
+                "risk_grade": f_audit.get("risk_grade", ""),
                 "decision": debate.get("final_decision", "Manual Review"),
                 "fraud_score": s.get("fraud_report", {}).get("fraud_probability", 0),
                 "confidence": 0.91,
+                "reason": debate.get("decision_narrative", cam_data.get("full_narrative", "")),
+                "vetoed": f_audit.get("vetoed", False),
             }
             session_store.set_credit_decision(session_id, decision)
             await queue.put(_sse("decision", decision))
@@ -280,6 +304,44 @@ async def regulatory_compare(session_id: str):
     engine = RegulatoryEngine()
     return engine.get_regime_comparison(loan, calcs, fd)
 
+# ─── Forensic Audit API ───────────────────────────────────────────────────────
+
+@app.get("/api/sessions/{session_id}/forensic-results")
+async def get_forensic_results(session_id: str):
+    session = session_store.get_session(session_id)
+    if not session:
+        raise HTTPException(404, "Session not found")
+    return session.get("forensic_audit", {})
+
+@app.get("/api/sessions/{session_id}/download-cam")
+async def download_cam(session_id: str, format: str = "pdf"):
+    session = session_store.get_session(session_id)
+    if not session:
+        raise HTTPException(404, "Session not found")
+    cam_data = session.get("forensic_audit", {}).get("cam_five_cs", {})
+    if not cam_data:
+        cam_data = session.get("cam_report", {})
+    if not cam_data:
+        raise HTTPException(400, "CAM report not yet generated")
+
+    company = session.get("company_name", "Company").replace(" ", "_")
+
+    if format.lower() == "docx":
+        content = generate_docx(cam_data)
+        filename = f"CAM_Report_{company}.docx"
+        media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    else:
+        content = generate_pdf(cam_data)
+        filename = f"CAM_Report_{company}.pdf"
+        media_type = "application/pdf"
+
+    from fastapi.responses import Response
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
 # ─── Results API ──────────────────────────────────────────────────────────────
 
 @app.get("/api/sessions/{session_id}/results")
@@ -291,6 +353,7 @@ async def get_results(session_id: str):
         "credit_decision": session.get("credit_decision", {}),
         "evidence": session.get("evidence", {}),
         "calculations": session.get("calculations", {}),
+        "forensic_audit": session.get("forensic_audit", {}),
         "fraud_report": session.get("fraud_report", {}),
         "simulation_results": session.get("simulation_results", {}),
         "cam_report": session.get("cam_report", {}),
